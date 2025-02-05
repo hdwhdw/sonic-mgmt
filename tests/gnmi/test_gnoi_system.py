@@ -5,6 +5,7 @@ import json
 from .helper import gnoi_request
 from tests.common.helpers.assertions import pytest_assert
 from tests.common.reboot import wait_for_startup
+from tests.common.reboot import wait_for_gnmi_container
 import re
 
 pytestmark = [
@@ -37,6 +38,7 @@ def test_gnoi_system_time(duthosts, rand_one_dut_hostname, localhost):
     pytest_assert("time" in msg_json, "System.Time API did not return time")
 
 
+@pytest.mark.disable_loganalyzer
 def test_gnoi_system_reboot(duthosts, rand_one_dut_hostname, localhost):
     """
     Verify the gNOI System Reboot API triggers a reboot and the device comes back online.
@@ -75,6 +77,14 @@ def test_gnoi_system_reboot_when_reboot_active(duthosts, rand_one_dut_hostname, 
     # Set flag to indicate that this test involves reboot
     duthost.host.options['skip_gnmi_check'] = True
 
+    # Wait for DUT to fully start up
+    wait_for_startup(duthost, localhost, delay=10, timeout=300)
+
+    # Wait for gNMI container to be back up
+    if not wait_for_gnmi_container(duthost):
+        logging.error("GNMI container did not restart in time!")
+        pytest.fail("GNMI container failed to restart, aborting tests.")
+
     # Trigger first reboot
     ret, msg = gnoi_request(duthost, localhost, "Reboot", '{"method": 1,"delay":0,"message":"Cold Reboot"}')
     pytest_assert(ret == 0, "System.Reboot API reported failure (rc = {}) with message: {}".format(ret, msg))
@@ -94,6 +104,14 @@ def test_gnoi_system_reboot_status_immediately(duthosts, rand_one_dut_hostname, 
 
     # Set flag to indicate that this test involves reboot
     duthost.host.options['skip_gnmi_check'] = True
+
+    # Wait for DUT to fully start up
+    wait_for_startup(duthost, localhost, delay=10, timeout=300)
+
+    # Wait for gNMI container to be back up
+    if not wait_for_gnmi_container(duthost):
+        logging.error("GNMI container did not restart in time!")
+        pytest.fail("GNMI container failed to restart, aborting tests.")
 
     # Trigger reboot
     ret, msg = gnoi_request(duthost, localhost, "Reboot", '{"method": 1, "message": "test"}')
@@ -115,7 +133,8 @@ def test_gnoi_system_reboot_status_immediately(duthosts, rand_one_dut_hostname, 
     pytest_assert(msg_json["active"] is True, "System.RebootStatus API did not return active = true")
 
 
-def gnoi_system_reboot_status_after_startup(duthosts, rand_one_dut_hostname, localhost):
+@pytest.mark.disable_loganalyzer
+def test_gnoi_system_reboot_status_after_startup(duthosts, rand_one_dut_hostname, localhost):
     """
     Verify the gNOI System RebootStatus API returns the correct status after the device has started up.
     """
@@ -124,13 +143,26 @@ def gnoi_system_reboot_status_after_startup(duthosts, rand_one_dut_hostname, loc
     # Set flag to indicate that this test involves reboot
     duthost.host.options['skip_gnmi_check'] = True
 
+    # Wait for DUT to fully start up
+    wait_for_startup(duthost, localhost, delay=10, timeout=300)
+
+    # Wait for gNMI container to be back up
+    if not wait_for_gnmi_container(duthost):
+        logging.error("GNMI container did not restart in time!")
+        pytest.fail("GNMI container failed to restart, aborting tests.")
+
     # Trigger reboot
     ret, msg = gnoi_request(duthost, localhost, "Reboot", '{"method": 1, "message": "test"}')
     pytest_assert(ret == 0, "System.Reboot API reported failure (rc = {}) with message: {}".format(ret, msg))
     logging.info("System.Reboot API returned msg: {}".format(msg))
 
     # Wait for device to come back online
-    wait_for_startup(duthost)
+    wait_for_startup(duthost, localhost, delay=10, timeout=300)
+
+    # Wait for gNMI container to be back up
+    if not wait_for_gnmi_container(duthost):
+        logging.error("GNMI container did not restart in time!")
+        pytest.fail("GNMI container failed to restart, aborting tests.")
 
     # Get reboot status
     ret, msg = gnoi_request(duthost, localhost, "RebootStatus", "")
