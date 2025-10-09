@@ -1,0 +1,169 @@
+---
+# Test playbook for csonic_network module
+# This creates a SONiC virtual switch with proper network interfaces
+# Similar to cEOS setup but for SONiC
+
+- hosts: localhost
+  gather_facts: no
+  become: yes
+
+  vars:
+    test_vm_name: "VM0200"
+    test_vm_set: "sonic-test"
+    mgmt_bridge: "br-mgmt"
+    fp_mtu_size: 9214
+    max_fp_num: 4
+
+  tasks:
+    - name: Clean up any existing test containers
+      shell: |
+        docker rm -f net_{{ test_vm_set }}_{{ test_vm_name }} 2>/dev/null || true
+        docker rm -f sonic_{{ test_vm_set }}_{{ test_vm_name }} 2>/dev/null || true
+      ignore_errors: yes
+
+    - name: Clean up existing OVS bridges
+      shell: |
+        for i in {0..3}; do
+          ovs-vsctl del-br br-{{ test_vm_name }}-$i 2>/dev/null || true
+        done
+      ignore_errors: yes
+
+    - name: Ensure management bridge exists
+      shell: |
+        if ! brctl show | grep -q "^{{ mgmt_bridge }}"; then
+          brctl addbr {{ mgmt_bridge }}
+          ip link set {{ mgmt_bridge }} up
+          ip addr add 10.250.0.1/24 dev {{ mgmt_bridge }} 2>/dev/null || true
+        fi
+
+    - name: Create OVS bridges for front panel ports
+      shell: |
+        ovs-vsctl add-br br-{{ test_vm_name }}-{{ item }}
+      loop: [0, 1, 2, 3]
+      ignore_errors: yes
+
+    - name: Create base network container
+      docker_container:
+        name: "net_{{ test_vm_set }}_{{ test_vm_name }}"
+        image: "docker.io/library/debian:bookworm"
+        pull: no
+        state: started
+        restart: no
+        tty: yes
+        network_mode: none
+        detach: true
+        capabilities:
+          - net_admin
+        privileged: yes
+        memory: 200M
+        memory_swap: 200M
+        command: sleep infinity
+
+    - name: Wait for base container to be ready
+      wait_for:
+        timeout: 5
+      delegate_to: localhost
+
+    - name: Create network interfaces using csonic_network module
+      csonic_network:
+        name: "net_{{ test_vm_set }}_{{ test_vm_name }}"
+        vm_name: "{{ test_vm_name }}"
+        fp_mtu: "{{ fp_mtu_size }}"
+        max_fp_num: "{{ max_fp_num }}"
+        mgmt_bridge: "{{ mgmt_bridge }}"
+        sonic_naming: true
+
+    - name: Verify interfaces in base container
+      shell: |
+        PID=$(docker inspect net_{{ test_vm_set }}_{{ test_vm_name }} -f '{{{{.State.Pid}}}}')
+        nsenter -t $PID -n ip link show
+      register: base_interfaces
+
+    - name: Display base container interfaces
+      debug:
+        msg: "{{ base_interfaces.stdout_lines }}"
+
+    - name: Check SONiC naming convention
+      shell: |
+        PID=$(docker inspect net_{{ test_vm_set }}_{{ test_vm_name }} -f '{{{{.State.Pid}}}}')
+        echo "Checking for SONiC-style interfaces:"
+        nsenter -t $PID -n ip link show | grep -E "(Ethernet0|Ethernet4|Ethernet8|Ethernet12|eth_bp)" || echo "Not found"
+      register: sonic_check
+
+    - name: Display SONiC interface check
+      debug:
+        msg: "{{ sonic_check.stdout_lines }}"
+
+    - name: Verify OVS bridge connections
+      shell: |
+        echo "=== OVS Bridge Ports ==="
+        for i in {0..3}; do
+          echo "br-{{ test_vm_name }}-$i:"
+          ovs-vsctl list-ports br-{{ test_vm_name }}-$i || echo "  (empty or doesn't exist)"
+        done
+      register: ovs_check
+
+    - name: Display OVS connections
+      debug:
+        msg: "{{ ovs_check.stdout_lines }}"
+
+    - name: Start SONiC container sharing network namespace
+      docker_container:
+        name: "sonic_{{ test_vm_set }}_{{ test_vm_name }}"
+        image: "docker-sonic-vs:latest"
+        pull: no
+        state: started
+        restart: no
+        network_mode: "container:net_{{ test_vm_set }}_{{ test_vm_name }}"
+        privileged: yes
+        detach: true
+        memory: 2G
+        memory_swap: 4G
+
+    - name: Wait for SONiC to start
+      wait_for:
+        timeout: 10
+      delegate_to: localhost
+
+    - name: Check SONiC container can see interfaces
+      shell: |
+        docker exec sonic_{{ test_vm_set }}_{{ test_vm_name }} ip link show
+      register: sonic_interfaces
+
+    - name: Display SONiC container interfaces
+      debug:
+        msg: "{{ sonic_interfaces.stdout_lines }}"
+
+    - name: Check SONiC supervisord status
+      shell: |
+        sleep 5
+        docker exec sonic_{{ test_vm_set }}_{{ test_vm_name }} supervisorctl status
+      register: sonic_services
+      ignore_errors: yes
+
+    - name: Display SONiC services status
+      debug:
+        msg: "{{ sonic_services.stdout_lines }}"
+
+    - name: Summary - Network topology created
+      debug:
+        msg:
+          - "=========================================="
+          - "SONiC Test Network Created Successfully!"
+          - "=========================================="
+          - "Base container: net_{{ test_vm_set }}_{{ test_vm_name }}"
+          - "SONiC container: sonic_{{ test_vm_set }}_{{ test_vm_name }}"
+          - ""
+          - "Management: {{ test_vm_name }}-m <-> eth0 <-> {{ mgmt_bridge }}"
+          - "Front Panel 0: {{ test_vm_name }}-t0 <-> Ethernet0 <-> br-{{ test_vm_name }}-0"
+          - "Front Panel 1: {{ test_vm_name }}-t1 <-> Ethernet4 <-> br-{{ test_vm_name }}-1"
+          - "Front Panel 2: {{ test_vm_name }}-t2 <-> Ethernet8 <-> br-{{ test_vm_name }}-2"
+          - "Front Panel 3: {{ test_vm_name }}-t3 <-> Ethernet12 <-> br-{{ test_vm_name }}-3"
+          - "Backplane: {{ test_vm_name }}-back <-> eth_bp"
+          - ""
+          - "To inspect:"
+          - "  docker exec sonic_{{ test_vm_set }}_{{ test_vm_name }} bash"
+          - "  docker exec sonic_{{ test_vm_set }}_{{ test_vm_name }} ip link"
+          - ""
+          - "To clean up:"
+          - "  docker rm -f sonic_{{ test_vm_set }}_{{ test_vm_name }} net_{{ test_vm_set }}_{{ test_vm_name }}"
