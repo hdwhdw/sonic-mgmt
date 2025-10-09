@@ -16,27 +16,115 @@ DOCUMENTATION = '''
 module: csonic_network
 version_added: "0.1"
 author: Based on ceos_network by Guohan Lu
-short_description: Create network for SONiC container
+short_description: Create network interfaces for SONiC virtual switch container
 description:
-    The module creates following network interfaces for SONiC virtual switch:
-    - 1 management interface (eth0) which is added to management bridge
-    - n front panel interfaces (Ethernet0, Ethernet4, Ethernet8...) which are added to front panel bridges
-    - 1 backplane interface (eth_bp)
+    Creates network interfaces for SONiC docker-sonic-vs container using the two-container model:
+    - Base container (net_*_VM*) holds the network namespace
+    - SONiC container (sonic_*_VM*) shares the namespace via network_mode=container
 
-    The key difference from ceos_network is that SONiC expects Ethernet naming convention
-    instead of eth1-4. We create eth interfaces first then rename to Ethernet convention.
+    This module creates veth pairs on the host and injects them into the base container's namespace:
 
-Parameters:
-    - name: container name (base container like net_sonic_VM0200)
-    - vm_name: VM name (like VM0200)
-    - mgmt_bridge: management bridge name on host
-    - fp_mtu: MTU for front panel ports
-    - max_fp_num: number of front panel ports (default 4)
-    - sonic_naming: use SONiC Ethernet naming convention (default True)
+    MANAGEMENT INTERFACE:
+    - Host: VM0200-m <--> eth0 in container
+    - Connected to: management bridge (br-mgmt)
+    - Purpose: Management plane access
+
+    FRONT PANEL INTERFACES (sonic_naming=true):
+    - Host: VM0200-t0 <--> Ethernet0 in container
+    - Host: VM0200-t1 <--> Ethernet4 in container
+    - Host: VM0200-t2 <--> Ethernet8 in container
+    - Host: VM0200-t3 <--> Ethernet12 in container
+    - Connected to: OVS bridges (br-VM0200-0 through br-VM0200-3)
+    - Purpose: Data plane ports (increment by 4 for SONiC lane-based naming)
+
+    BACKPLANE INTERFACE:
+    - Host: VM0200-back <--> eth_bp in container
+    - Connected to: Backplane bridge (br-b-vms6-1)
+    - Purpose: BGP peering with PTF/ExaBGP for route injection
+
+    KEY DIFFERENCES FROM ceos_network:
+    - SONiC uses Ethernet0/4/8/12 instead of eth1/2/3/4
+    - Backplane interface named eth_bp instead of eth5
+    - Increments by 4 to match SONiC's 100G port lane numbering
+
+    PREREQUISITES:
+    - Base container must exist and be running
+    - OVS bridges must be created (br-VM*-0, br-VM*-1, etc.)
+    - Management bridge must exist (br-mgmt)
+    - docker-py Python library must be installed
+
+options:
+    name:
+        description:
+            - Name of the base container that holds the network namespace
+            - Format: net_<vm_set_name>_<vm_name>
+            - Example: net_sonic-test_VM0200
+        required: true
+        type: str
+
+    vm_name:
+        description:
+            - VM identifier used for interface and bridge naming
+            - Example: VM0200
+            - This is used to generate veth pair names like VM0200-t0, VM0200-back
+        required: true
+        type: str
+
+    mgmt_bridge:
+        description:
+            - Name of the management bridge on the host
+            - Typically: br-mgmt
+            - The management interface (eth0) will be connected to this bridge
+        required: true
+        type: str
+
+    fp_mtu:
+        description:
+            - MTU size for front panel interfaces
+            - Set to 0 to use default MTU
+            - Common values: 1500 (default), 9214 (jumbo frames)
+        required: false
+        type: int
+        default: 0
+
+    max_fp_num:
+        description:
+            - Number of front panel ports to create
+            - Creates interfaces 0 through (max_fp_num - 1)
+            - Default: 4 (creates Ethernet0, 4, 8, 12)
+        required: false
+        type: int
+        default: 4
+
+    sonic_naming:
+        description:
+            - Use SONiC Ethernet naming convention (Ethernet0, Ethernet4, etc.)
+            - Set to false to use eth1, eth2, eth3, eth4 like cEOS
+            - Should almost always be true for SONiC containers
+        required: false
+        type: bool
+        default: true
+
+notes:
+    - This module creates interfaces only. You must separately start the SONiC container.
+    - The SONiC container must use network_mode pointing to the base container.
+    - OVS bridges are created by vm_topology.py, not by this module.
+    - Interface names must match SONiC's config_db.json PORT table entries.
 '''
 
 EXAMPLES = '''
-- name: Create SONiC network
+# Basic usage - Create network for SONiC VM0200
+- name: Create SONiC network interfaces
+  csonic_network:
+    name:           net_sonic-test_VM0200
+    vm_name:        VM0200
+    mgmt_bridge:    br-mgmt
+    fp_mtu:         9214
+    max_fp_num:     4
+    sonic_naming:   true
+
+# Use in a playbook with variables
+- name: Create VMs network
   csonic_network:
     name:           net_{{ vm_set_name }}_{{ vm_name }}
     vm_name:        "{{ vm_name }}"
@@ -44,6 +132,59 @@ EXAMPLES = '''
     max_fp_num:     "{{ max_fp_num }}"
     mgmt_bridge:    "{{ mgmt_bridge }}"
     sonic_naming:   true
+
+# Create with default MTU
+- name: Create SONiC network with defaults
+  csonic_network:
+    name:           net_sonic-test_VM0200
+    vm_name:        VM0200
+    mgmt_bridge:    br-mgmt
+
+# Create with legacy eth naming (not recommended for SONiC)
+- name: Create with eth naming
+  csonic_network:
+    name:           net_sonic-test_VM0200
+    vm_name:        VM0200
+    mgmt_bridge:    br-mgmt
+    sonic_naming:   false
+  # Creates: eth0 (mgmt), eth1-4 (FP), eth5 (BP)
+
+# Verify interfaces were created
+- name: Check interfaces in container
+  command: docker exec net_sonic-test_VM0200 ip link show
+
+# Example: Full SONiC container setup workflow
+- name: Create base container
+  docker_container:
+    name: net_sonic-test_VM0200
+    image: debian:bookworm
+    command: sleep infinity
+    state: started
+
+- name: Create network interfaces
+  csonic_network:
+    name: net_sonic-test_VM0200
+    vm_name: VM0200
+    mgmt_bridge: br-mgmt
+    fp_mtu: 9214
+
+- name: Start SONiC container sharing network
+  docker_container:
+    name: sonic_sonic-test_VM0200
+    image: docker-sonic-vs:latest
+    network_mode: "container:net_sonic-test_VM0200"
+    privileged: yes
+    state: started
+
+# Troubleshooting - Check what was created
+- name: List host interfaces
+  shell: ip link show | grep VM0200
+
+- name: Check container interfaces
+  shell: docker exec net_sonic-test_VM0200 ip link show
+
+- name: Verify OVS bridge connections
+  shell: ovs-vsctl list-ports br-VM0200-0
 '''
 
 
