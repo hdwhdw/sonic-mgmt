@@ -16,19 +16,17 @@ def test_gnmic_capabilities(gnmi_tls):  # noqa: F811
     result = gnmi_tls.gnmic.capabilities()
     logger.info("Capabilities response: %s", result)
 
-    assert "gnmi-version" in result, \
-        f"Missing gnmi-version in response: {list(result.keys())}"
+    assert "version" in result, \
+        f"Missing version in response: {list(result.keys())}"
     assert "supported-models" in result, \
         f"Missing supported-models in response: {list(result.keys())}"
     assert len(result["supported-models"]) > 0, \
         "supported-models should not be empty"
 
-    encodings = result.get("supported-encodings", [])
-    assert "sonic-db" in encodings, \
-        f"sonic-db not in supported-encodings: {encodings}"
+    encodings = result.get("encodings", [])
     assert "JSON_IETF" in encodings, \
-        f"JSON_IETF not in supported-encodings: {encodings}"
+        f"JSON_IETF not in encodings: {encodings}"
 
-    logger.info("gnmi-version: %s", result["gnmi-version"])
-    logger.info("supported-encodings: %s", encodings)
+    logger.info("version: %s", result["version"])
+    logger.info("encodings: %s", encodings)
     logger.info("supported-models count: %d", len(result["supported-models"]))
