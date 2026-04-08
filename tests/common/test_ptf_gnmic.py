@@ -147,4 +147,4 @@ class TestCapabilities:
         }
         with pytest.raises(GnmicCallError) as exc_info:
             client.capabilities()
-        assert "invalid JSON" in str(exc_info.value).lower() or "invalid json" in str(exc_info.value)
+        assert "invalid json" in str(exc_info.value).lower()
