@@ -32,29 +32,28 @@ This enables:
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────┐
-│ sonic-mgmt container                                    │
-│                                                         │
-│  Test Cases ──► gnmi_tls fixture (transport param)      │
-│                     │                                   │
-│            ┌────────┴────────┐                          │
-│            ▼                 ▼                           │
-│     transport='tls'    transport='uds'                  │
-│            │                 │                           │
-│     PtfGrpc/PtfGnoi    DutGrpc/DutGnoi                 │
-│     (ptfhost.shell)    (duthost.shell)                  │
-│            │                 │                           │
-└────────────┼─────────────────┼──────────────────────────┘
-             │                 │
-             ▼                 ▼
-┌──────────────────┐  ┌──────────────────────────────────┐
-│ PTF container     │  │ DUT host                         │
-│                   │  │                                  │
-│  grpcurl ─────────┼──┼──► gNMI server :50052 (TCP+TLS) │
-│                   │  │                                  │
-│                   │  │  grpcurl ──► gnmi.sock (UDS)     │
-└───────────────────┘  └──────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph mgmt["sonic-mgmt container"]
+        tests["Test Cases"] --> fixture["gnmi_tls fixture\n(transport param)"]
+        fixture --> tls_path["transport='tls'\nPtfGrpc / PtfGnoi\n(ptfhost.shell)"]
+        fixture --> uds_path["transport='uds'\nDutGrpc / DutGnoi\n(duthost.shell)"]
+    end
+
+    subgraph ptf["PTF container"]
+        ptf_grpcurl["grpcurl"]
+    end
+
+    subgraph dut["DUT host"]
+        gnmi_tcp["gNMI server :50052\n(TCP+TLS)"]
+        gnmi_uds["gnmi.sock\n(UDS, plaintext)"]
+        dut_grpcurl["grpcurl"]
+    end
+
+    tls_path --> ptf_grpcurl
+    ptf_grpcurl -->|"TCP+TLS"| gnmi_tcp
+    uds_path --> dut_grpcurl
+    dut_grpcurl -->|"unix://"| gnmi_uds
 ```
 
 ## Components
