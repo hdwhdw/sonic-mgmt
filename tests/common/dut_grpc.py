@@ -63,9 +63,14 @@ class DutGrpc:
         """Configure connection timeout in seconds."""
         self.timeout = int(timeout_seconds)
 
-    def _build_cmd(self, extra_args=None, service_method=None):
+    def _build_cmd(self, extra_args=None, service_method=None, metadata=None):
         """
         Build a grpcurl shell command string.
+
+        Args:
+            extra_args: Additional command arguments.
+            service_method: gRPC service/method target.
+            metadata: Optional gRPC metadata as dict or list of (key, value) tuples.
 
         Returns a string suitable for duthost.shell().
         """
@@ -73,6 +78,10 @@ class DutGrpc:
             "grpcurl", "-plaintext", "-format", "json",
             "-connect-timeout", str(self.timeout),
         ]
+        if metadata:
+            items = metadata.items() if isinstance(metadata, dict) else metadata
+            for name, value in items:
+                parts.extend(["-H", shlex.quote(f"{name}: {value}")])
         if extra_args:
             parts.extend(extra_args)
         parts.append(shlex.quote(self.target))
@@ -141,7 +150,7 @@ class DutGrpc:
         result = self._execute(cmd)
         return {"symbol": symbol, "description": result["stdout"].strip()}
 
-    def call_unary(self, service, method, request=None):
+    def call_unary(self, service, method, request=None, metadata=None):
         """
         Make a unary gRPC call.
 
@@ -149,6 +158,7 @@ class DutGrpc:
             service: Service name (e.g. "gnoi.system.System")
             method: Method name (e.g. "Time")
             request: Optional request dict.
+            metadata: Optional gRPC metadata as dict or list of (key, value) tuples.
 
         Returns:
             Parsed JSON response dict.
@@ -156,7 +166,7 @@ class DutGrpc:
         service_method = f"{service}/{method}"
         request_json = json.dumps(request) if request else "{}"
         extra_args = ["-d", shlex.quote(request_json)]
-        cmd = self._build_cmd(extra_args=extra_args, service_method=service_method)
+        cmd = self._build_cmd(extra_args=extra_args, service_method=service_method, metadata=metadata)
         result = self._execute(cmd)
 
         try:
@@ -164,7 +174,7 @@ class DutGrpc:
         except json.JSONDecodeError as e:
             raise DutGrpcCallError(f"Invalid JSON from {service_method}: {e}")
 
-    def call_server_streaming(self, service, method, request=None):
+    def call_server_streaming(self, service, method, request=None, metadata=None):
         """
         Make a server-streaming gRPC call.
 
@@ -172,6 +182,7 @@ class DutGrpc:
             service: Service name
             method: Method name
             request: Optional request dict.
+            metadata: Optional gRPC metadata as dict or list of (key, value) tuples.
 
         Returns:
             List of parsed JSON response dicts.
@@ -179,7 +190,7 @@ class DutGrpc:
         service_method = f"{service}/{method}"
         request_json = json.dumps(request) if request else "{}"
         extra_args = ["-d", shlex.quote(request_json)]
-        cmd = self._build_cmd(extra_args=extra_args, service_method=service_method)
+        cmd = self._build_cmd(extra_args=extra_args, service_method=service_method, metadata=metadata)
         result = self._execute(cmd)
 
         responses = []
