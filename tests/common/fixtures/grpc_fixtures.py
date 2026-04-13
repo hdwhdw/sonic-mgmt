@@ -66,7 +66,9 @@ def _ensure_grpcurl_on_dut(duthost):
         return
 
     # Detect DUT architecture
-    arch_result = duthost.shell("dpkg --print-architecture")
+    arch_result = duthost.shell("dpkg --print-architecture", module_ignore_errors=True)
+    if arch_result["rc"] != 0:
+        pytest.skip("Cannot detect DUT architecture via dpkg")
     dut_arch = arch_result["stdout"].strip()
     grpcurl_arch = _GRPCURL_ARCH_MAP.get(dut_arch)
     if not grpcurl_arch:
@@ -92,6 +94,11 @@ def _ensure_grpcurl_on_dut(duthost):
     try:
         with tarfile.open(local_tarball, "r:gz") as tar:
             member = tar.getmember("grpcurl")
+            # Validate extraction path to prevent path traversal
+            extracted = os.path.realpath(os.path.join(local_tmp, member.name))
+            if not extracted.startswith(os.path.realpath(local_tmp)):
+                shutil.rmtree(local_tmp, ignore_errors=True)
+                pytest.skip("Tarball member has unexpected path")
             tar.extract(member, path=local_tmp)
     except (tarfile.TarError, KeyError) as e:
         shutil.rmtree(local_tmp, ignore_errors=True)
