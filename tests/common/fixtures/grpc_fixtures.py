@@ -35,11 +35,11 @@ from tests.common.dut_gnoi import DutGnoi
 
 logger = logging.getLogger(__name__)
 
-GRPCURL_VERSION = "1.9.1"
+GRPCURL_VERSION = "1.9.3"
 
 # Architecture mapping: dpkg --print-architecture → grpcurl release suffix
 _GRPCURL_ARCH_MAP = {
-    "amd64": "linux_amd64",
+    "amd64": "linux_x86_64",
     "arm64": "linux_arm64",
     "armhf": "linux_armv6",
 }
