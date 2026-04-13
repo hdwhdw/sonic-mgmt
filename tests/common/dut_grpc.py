@@ -75,9 +75,9 @@ class DutGrpc:
         ]
         if extra_args:
             parts.extend(extra_args)
-        parts.append(self.target)
+        parts.append(shlex.quote(self.target))
         if service_method:
-            parts.append(service_method)
+            parts.append(shlex.quote(service_method))
         return " ".join(parts)
 
     def _execute(self, cmd):
@@ -137,12 +137,7 @@ class DutGrpc:
         Returns:
             Dict with 'symbol' and 'description' keys.
         """
-        parts = [
-            "grpcurl", "-plaintext",
-            "-connect-timeout", str(self.timeout),
-            self.target, "describe", symbol,
-        ]
-        cmd = " ".join(parts)
+        cmd = self._build_cmd(service_method=f"describe {symbol}")
         result = self._execute(cmd)
         return {"symbol": symbol, "description": result["stdout"].strip()}
 
