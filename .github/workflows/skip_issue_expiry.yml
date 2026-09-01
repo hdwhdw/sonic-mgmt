@@ -36,6 +36,7 @@ jobs:
           python -m pip install -r tools/skip_expiry/requirements.txt
 
       - name: Get GitHub App token
+        if: ${{ secrets.GH_APP_ID != '' && secrets.GH_APP_PRIVATE_KEY != '' }}
         id: app-token
         uses: actions/create-github-app-token@v1
         with:
